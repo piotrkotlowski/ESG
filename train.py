@@ -6,6 +6,52 @@ from torch.utils.data import DataLoader
 
 from modeling.dataset import ECGDigitizationDataset
 
+import torch
+from modeling.stage1_flattening import DotterUNet
+from modeling.stage2_segmentation import get_resnet_unet
+
+def test_model_compilation():
+    # 1. Setup device and dummy data
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Testing on device: {device}\n")
+    
+    # Create a fake batch of images: (Batch_Size, Channels, Height, Width)
+    # Using 512x512 as a standard test size for U-Nets
+    batch_size = 2
+    dummy_input = torch.randn(batch_size, 3, 512, 512).to(device)
+    print(f"Dummy Input Shape: {dummy_input.shape}")
+
+    # -----------------------------------------
+    # Test 1: Dotter U-Net (Stage 1)
+    # -----------------------------------------
+    print("\n--- Testing Dotter U-Net ---")
+    try:
+        dotter_model = DotterUNet(in_channels=3, out_channels=1).to(device)
+        dotter_output = dotter_model(dummy_input)
+        
+        print(f"SUCCESS! Dotter U-Net Forward Pass Complete.")
+        print(f"Expected Output Shape: torch.Size([{batch_size}, 1, 512, 512])")
+        print(f"Actual Output Shape:   {dotter_output.shape}")
+    except Exception as e:
+        print(f"FAILED Dotter U-Net: {e}")
+
+    # -----------------------------------------
+    # Test 2: ResNet34 U-Net (Stage 2)
+    # -----------------------------------------
+    print("\n--- Testing ResNet34 U-Net ---")
+    try:
+        resnet_model = get_resnet_unet(device=device)
+        resnet_output = resnet_model(dummy_input)
+        
+        print(f"SUCCESS! ResNet34 U-Net Forward Pass Complete.")
+        print(f"Expected Output Shape: torch.Size([{batch_size}, 1, 512, 512])")
+        print(f"Actual Output Shape:   {resnet_output.shape}")
+    except Exception as e:
+        print(f"FAILED ResNet34 U-Net: {e}")
+
+if __name__ == "__main__":
+    test_model_compilation()
+
 def calculate_metrics(outputs, targets, threshold=0.5, is_logits=False):
     """Calculate Accuracy and F1 Score for batches."""
     if is_logits:
@@ -40,9 +86,9 @@ def train_dotter_unet(train_loader, val_loader, device, num_epochs=10):
     print("\n--- Starting Training: Dotter U-Net (Stage 1) ---")
     model = DotterUNet(in_channels=3, out_channels=1).to(device)
     
-    # From spec.md: Use Mean Squared Error (MSE) or a specialized keypoint focal loss.
-    criterion = nn.MSELoss() 
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    # From spec.md: Use BCEWithLogitsLoss
+    criterion = nn.BCEWithLogitsLoss() 
+    optimizer = optim.Adam(model.parameters(), lr=0.005)
     
     for epoch in range(num_epochs):
         model.train()
@@ -76,7 +122,7 @@ def train_dotter_unet(train_loader, val_loader, device, num_epochs=10):
                 loss = criterion(outputs, targets)
                 val_loss += loss.item() * images.size(0)
                 
-                acc, f1 = calculate_metrics(outputs, targets, threshold=0.1, is_logits=False)
+                acc, f1 = calculate_metrics(outputs, targets, threshold=0.1, is_logits=True)
                 val_acc += acc * images.size(0)
                 val_f1 += f1 * images.size(0)
                 
@@ -183,25 +229,3 @@ def train_resnet_unet(train_loader, val_loader, device, num_epochs=10):
     torch.save(model.state_dict(), save_path)
     print(f"Saved ResNet34 U-Net weights to {save_path}")
     return model
-
-def main():
-    # Setup Device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Training on device: {device}")
-    
-    # Setup Dataset and DataLoader
-    # Note: Ensure you have your actual data prepared in data/train/images and data/val/images
-    train_dataset = ECGDigitizationDataset(data_dir="data/train", split="train")
-    val_dataset = ECGDigitizationDataset(data_dir="data/val", split="val")
-    
-    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False, num_workers=0)
-    
-    # 1. Train the Stage 1 Grid flattening Dotter Model
-    train_dotter_unet(train_loader, val_loader, device=device, num_epochs=5)
-    
-    # 2. Train the Stage 2 Clean Trace Segmentation Model
-    train_resnet_unet(train_loader, val_loader, device=device, num_epochs=5)
-
-if __name__ == "__main__":
-    main()

@@ -51,16 +51,11 @@ class ECGDigitizationDataset(Dataset):
                 self.records.append(record)
 
     def __len__(self):
-        return max(len(self.records), 1)  # Skeleton fallback
+        return len(self.records)
 
     def __getitem__(self, idx):
-        # Skeleton fallback for missing data
         if not self.records:
-            # Create a mock image and masks for skeleton return
-            mock_img = np.zeros((800, 1200, 3), dtype=np.uint8)
-            grid_mask = self.generate_grid_mask(mock_img)
-            target_mask = self.generate_segmentation_mask(mock_img, leads=[])
-            return {"image": mock_img, "grid_mask": grid_mask, "target_mask": target_mask}
+            raise ValueError(f"No records found in {self.data_dir}. Ensure data splitting and file loading was successful.")
 
         record = self.records[idx]
         image = cv2.imread(record["image"])
@@ -82,33 +77,37 @@ class ECGDigitizationDataset(Dataset):
                 
         # Parse WFDB Signal (.hea/.dat pair)
         # Assuming you may want to extract ground truth millivolt signals to return for Phase 4 evaluation:
-        wfdb_signal = None
+        wfdb_signal = "None"
         if wfdb is not None and os.path.exists(record["hea"]) and os.path.exists(record["dat"]):
             # Note: wfdb reads the prefix without extension
             sig, fields = wfdb.rdsamp(record["base_name"])
             wfdb_signal = {"signal": sig, "fields": fields}
 
-        sample = {
-            "image": image,
-            "metadata": metadata, # Expose for Stage 4/5 calibration logic
-            "wfdb": wfdb_signal
-        }
-
         if self.split in ['train', 'val']:
             # Load your 1D ground truth and generate corresponding 2D masks
             grid_mask = self.generate_grid_mask(image, metadata)
-            
-            # Note: Due to overlap complexity, instead of concatenating all traces onto one image,
-            # we isolate leads into separate channels or a combined dictionary.
-            # In Stage 2 training, you will pick a lead and use its specific mask to train on.
-            # `generate_segmentation_mask` now handles the 'plotted_pixels' from the JSON.
             target_mask_dict = self.generate_segmentation_mask(image, leads=metadata.get("leads", []))
             
-            sample["grid_mask"] = grid_mask
+            # Standardize sizes for batching
+            target_size = (512, 512)
+            image = cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
+            grid_mask = cv2.resize(grid_mask, target_size, interpolation=cv2.INTER_LINEAR)
             
-            # You can concatenate them [Num_Leads, H, W] for the model, or just return the dict.
-            # We'll return the dict of lead_name -> (Height, Width) mask tensor to let the DataLoaders organize it.
-            sample["target_mask"] = target_mask_dict
+            resized_target_mask_dict = {}
+            for k, v in target_mask_dict.items():
+                resized_target_mask_dict[k] = cv2.resize(v, target_size, interpolation=cv2.INTER_NEAREST)
+                
+            sample = {
+                "image": image,
+                "grid_mask": grid_mask,
+                "target_mask": resized_target_mask_dict
+            }
+        else:
+            target_size = (512, 512)
+            image = cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
+            sample = {
+                "image": image
+            }
             
         if self.transform:
             sample = self.transform(**sample)
