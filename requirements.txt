@@ -1,0 +1,18 @@
+# Deep Learning Framework
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Segmentation Models
+segmentation-models-pytorch>=0.3.3
+
+# Computer Vision & Image Processing
+opencv-python>=4.8.0
+scikit-image>=0.21.0
+
+# Scientific & Data Processing
+numpy>=1.24.0
+scipy>=1.11.0
+wfdb>=4.1.0
+
+# Utility & Notebooks
+jupyter>=1.0.0
